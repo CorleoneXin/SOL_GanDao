@@ -12,6 +12,7 @@ from spl.token._layouts import MINT_LAYOUT
 from spl.token.instructions import get_associated_token_address
 
 from modules import dbconnect
+from modules import Spl2022
 
 
 class BatchOption():
@@ -74,36 +75,36 @@ class BatchOption():
             
         self._send_tx(sender, ixns)
 
-    def batch_collection_spl(self, sender: Keypair, mint:Pubkey, amount: int):
-        sql_data = f"select * from BatchWallet"
-        accounts = self.db_account.getData(sql_data)
-        account_count  = len(accounts)
+    # def batch_collection_spl(self, sender: Keypair, mint:Pubkey, amount: int):
+    #     sql_data = f"select * from BatchWallet"
+    #     accounts = self.db_account.getData(sql_data)
+    #     account_count  = len(accounts)
 
-        decimals = self._get_token_decimals(mint)
-        master_ATA = get_associated_token_address(sender.pubkey(), mint)
-        amount = amount * (10 ** decimals) 
-        for index in range(0, account_count):
-            # 获取db内的私钥，生成对应的keyPair
-            privKey = accounts[index][1]
-            account = Keypair.from_base58_string(privKey)
-            # 获取ATA账户
-            account_token_account = get_associated_token_address(account.pubkey(), mint)
-            # 获取masterKey的ATA账户
-            transfer_ix = transfer_checked(
-                TransferCheckedParams(
-                    program_id=TOKEN_PROGRAM_ID,
-                    source=account_token_account,
-                    mint=mint,
-                    dest=master_ATA,
-                    owner=account.pubkey(),
-                    amount=amount,
-                    decimals=decimals,
-                    signers=[]
-                )
-            )            
-            ixns = [transfer_ix]
-            print(f'collection spl-{index}')
-            self._send_tx(account, ixns)
+    #     decimals = self._get_token_decimals(mint)
+    #     master_ATA = get_associated_token_address(sender.pubkey(), mint)
+    #     amount = amount * (10 ** decimals) 
+    #     for index in range(0, account_count):
+    #         # 获取db内的私钥，生成对应的keyPair
+    #         privKey = accounts[index][1]
+    #         account = Keypair.from_base58_string(privKey)
+    #         # 获取ATA账户
+    #         account_token_account = get_associated_token_address(account.pubkey(), mint)
+    #         # 获取masterKey的ATA账户
+    #         transfer_ix = transfer_checked(
+    #             TransferCheckedParams(
+    #                 program_id=TOKEN_PROGRAM_ID,
+    #                 source=account_token_account,
+    #                 mint=mint,
+    #                 dest=master_ATA,
+    #                 owner=account.pubkey(),
+    #                 amount=amount,
+    #                 decimals=decimals,
+    #                 signers=[]
+    #             )
+    #         )            
+    #         ixns = [transfer_ix]
+    #         print(f'collection spl-{index}')
+    #         self._send_tx(account, ixns)
     
     
     def batch_collection_byMaster_spl(self, sender: Keypair, mint:Pubkey, amount: int):
@@ -178,9 +179,6 @@ class BatchOption():
             
         self._send_tx(sender, ixns)
     
-    def batch_transfer_spl_2022(self, sender: Keypair, amount: int):
-        pass
-    
     # 为db的地址，批量生成ATA账户
     def batch_create_spl_ATA(self, sender: Keypair, mint: Pubkey):
         sql_data = f"select * from BatchWallet"
@@ -200,12 +198,104 @@ class BatchOption():
             ixns.append(create_ata_ix)
             
         self._send_tx(sender, ixns)
-    
-    def batch_create_spl_2022_ATA(self, sendre: Keypair):
+    #--------SOL2022-------------------
+    def batch_create_spl_2022_ATA(self, sender: Keypair, mint: Pubkey): 
+        sql_data = f"select * from BatchWallet"
+        accounts = self.db_account.getData(sql_data)
+        account_count  = len(accounts)
+        ixns = []
+        # 转帐指令打包到一起发送
+        for index in range(0, account_count):
+            addr = accounts[index][0]
+            addr = Pubkey.from_string(addr)
+            # 创建ATA指令
+            create_ata_ix = Spl2022.create_associated_token2022_account(
+                payer=sender.pubkey(),
+                owner=addr,
+                mint=mint
+            )
+            ixns.append(create_ata_ix)
+            
+        self._send_tx(sender, ixns)
         pass
     
-    def batch_create_spl_ATA_transfer(slef, senfer: Keypair, amount: int):
+    
+    def batch_transfer_spl_2022(self, sender: Keypair, mint:Pubkey,amount: int):
+        sql_data = f"select * from BatchWallet"
+        accounts = self.db_account.getData(sql_data)
+        account_count  = len(accounts)
+
+        decimals = self._get_token_decimals(mint)
+        master_ATA = Spl2022.get_associated_token2022_address(sender.pubkey(), mint)
+        amount = amount * (10 ** decimals) 
+        ixns = []
+        for index in range(0, account_count):
+            # 获取db内的私钥，生成对应的keyPair
+            privKey = accounts[index][1]
+            account = Keypair.from_base58_string(privKey)
+            # 获取ATA账户
+            account_token_account = Spl2022.get_associated_token2022_address(account.pubkey(), mint)            
+            transfer_ix = transfer_checked(
+                TransferCheckedParams(
+                    program_id=TOKEN_2022_PROGRAM_ID,
+                    source=master_ATA,
+                    mint=mint,
+                    dest=account_token_account,
+                    owner=sender.pubkey(),
+                    amount=amount,
+                    decimals=decimals,
+                    signers=[]
+                )
+            )            
+            ixns.append(transfer_ix)
+            
+        self._send_tx(sender, ixns)
         pass
     
-    def batch_create_spl_2022_ATA_transfer(slef, senfer: Keypair, amount: int):
-        pass
+    
+    def batch_collection_byMaster_spl2022(self, sender: Keypair, mint:Pubkey, amount: int):
+        sql_data = "select * from BatchWallet"
+        accounts = self.db_account.getData(sql_data)
+        account_count = len(accounts)
+
+        decimals = self._get_token_decimals(mint)
+        master_ATA = Spl2022.get_associated_token2022_address(sender.pubkey(), mint)
+        amount = amount * (10 ** decimals)
+
+        ix = []
+        signers = [sender]
+        for index in range(0, account_count):
+            privKey = accounts[index][1]
+            account = Keypair.from_base58_string(privKey)
+            account_token_account = Spl2022.get_associated_token2022_address(account.pubkey(), mint)
+
+            transfer_ix = transfer_checked(
+                TransferCheckedParams(
+                    program_id=TOKEN_2022_PROGRAM_ID,
+                    source=account_token_account,
+                    mint=mint,
+                    dest=master_ATA,
+                    owner=account.pubkey(),
+                    amount=amount,
+                    decimals=decimals,
+                    signers=[]
+                )
+            )
+            ix.append(transfer_ix)
+            signers.append(account)
+
+        print('collection in one')
+        # 创建消息
+        message = Message(ix, sender.pubkey())            
+        recent_blockhash = self.client.get_latest_blockhash().value.blockhash
+        tx = Transaction(signers, message, recent_blockhash)
+        tx.sign(signers, recent_blockhash)
+
+        result = self.client.send_transaction(tx)
+        print("txid:", result.value)
+    
+    # def batch_create_spl_ATA_transfer(slef, senfer: Keypair, amount: int):
+    #     pass
+    
+    # def batch_create_spl_2022_ATA_transfer(self, sender: Keypair, amount: int,  mint: Pubkey):
+    #     pass
