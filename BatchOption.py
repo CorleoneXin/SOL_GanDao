@@ -28,7 +28,28 @@ class BatchOption():
         
     def get_addr_balance(self, addr:str):
         balance = self.client.get_balance(addr).value
-        print(f'addr -{addr}- balance : {balance}')
+        print(f'addr -{addr}- Sol balance : {balance}')
+        
+    # 查询代币余额
+    def get_token_balance(self, addr:Pubkey, mint: Pubkey):
+        try:
+            account_token_account = get_associated_token_address(addr, mint)  
+            balance = self.client.get_token_account_balance(account_token_account)
+            balance = float(balance.value.amount) / (10 ** balance.value.decimals)
+            print(f'addr -{addr}- spl balance : {balance}')
+            # return float(balance.value.amount) / (10 ** balance.value.decimals)
+        except Exception as e:
+            return 0
+        
+    def get_token2022_balance(self, addr:Pubkey, mint: Pubkey):
+        try:
+            account_token_account = Spl2022.get_associated_token2022_address(addr, mint)  
+            balance = self.client.get_token_account_balance(account_token_account)
+            balance = float(balance.value.amount) / (10 ** balance.value.decimals)
+            print(f'addr -{addr}- spl2022 balance : {balance}')
+            # return float(balance.value.amount) / (10 ** balance.value.decimals)
+        except Exception as e:
+            return 0
         
     def get_token_info(self, mint):
         info = self.client.get_account_info(mint)

@@ -42,7 +42,12 @@ if __name__ == "__main__":
     
     # 分发sol
     # cls.batch_transfer_sol(sender, 1000000)
+    # 查询
+    cls.get_addr_balance(sender.pubkey())
+    # cls.get_token_balance(sender.pubkey(), mint)
+    cls.get_token2022_balance(sender.pubkey(), mint)
     
+    #----SPL-----
     # 创建代币ATA账户
     # cls.batch_create_spl_ATA(sender, mint)
     # 分发spl代币
@@ -58,5 +63,5 @@ if __name__ == "__main__":
     # 分发spl代币
     # cls.batch_transfer_spl_2022(sender, mint, 10)
     # 由master支付费用进行归集
-    cls.batch_collection_byMaster_spl2022(sender, mint, 1)
+    # cls.batch_collection_byMaster_spl2022(sender, mint, 1)
     pass
