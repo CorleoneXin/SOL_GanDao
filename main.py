@@ -26,12 +26,16 @@ print(f'TOKEN_MINT : {TOKEN_MINT}')
 
 import GenerateKey
 import BatchOption
+import BatchPumpOption
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 
 cls = BatchOption.BatchOption(DB_NAME, RPC_URL)
+
+clsPump = BatchPumpOption.BatchPumpOption(DB_NAME, RPC_URL)
 sender = Keypair.from_base58_string(MASTER_KEY)
 mint = Pubkey.from_string(TOKEN_MINT)
+# mint = Pubkey.from_string('Hf7UTUeFT9vvYiexvNiM17sDSfNknFpzxVgjTDZyH1yC')
 
 def gererateKey():
     # GenerateKey.GenerateKey(DB_NAME, int(GERERATE_KEY_AMOUNT))
@@ -41,11 +45,13 @@ if __name__ == "__main__":
     # gererateKey()
     
     # 分发sol
-    # cls.batch_transfer_sol(sender, 1000000)
+    # cls.batch_transfer_sol(sender, 10000000)
+    # 归集sol
+    cls.batch_collection_sol(sender)
     # 查询
-    cls.get_addr_balance(sender.pubkey())
+    # cls.get_addr_balance(sender.pubkey())
     # cls.get_token_balance(sender.pubkey(), mint)
-    cls.get_token2022_balance(sender.pubkey(), mint)
+    # cls.get_token2022_balance(sender.pubkey(), mint)
     
     #----SPL-----
     # 创建代币ATA账户
@@ -64,4 +70,9 @@ if __name__ == "__main__":
     # cls.batch_transfer_spl_2022(sender, mint, 10)
     # 由master支付费用进行归集
     # cls.batch_collection_byMaster_spl2022(sender, mint, 1)
+    
+    #----pump_buy_sell---
+    print('--------pump-------')
+    # clsPump.batch_buy_sell(sender.pubkey(), 'tQxGNgVqxY7W4hQLMAy4oKXvGWaDs93M9kB9nSgw9Ct', 4)
+    
     pass

@@ -29,6 +29,7 @@ class BatchOption():
     def get_addr_balance(self, addr:str):
         balance = self.client.get_balance(addr).value
         print(f'addr -{addr}- Sol balance : {balance}')
+        return balance
         
     # 查询代币余额
     def get_token_balance(self, addr:Pubkey, mint: Pubkey):
@@ -95,6 +96,30 @@ class BatchOption():
             ixns.append(tx1)
             
         self._send_tx(sender, ixns)
+        
+    def batch_collection_sol(self, sender: Keypair):
+        sql_data = f"select * from BatchWallet"
+        accounts = self.db_account.getData(sql_data)
+        account_count  = len(accounts)
+        ixns = []
+        signers = [sender]
+        # 转帐指令打包到一起发送
+        for index in range(0, account_count):
+            priv = accounts[index][1]
+            from_keypair = Keypair.from_base58_string(priv)
+            amount = self.get_addr_balance(from_keypair.pubkey())
+            tx1 = transfer(TransferParams(from_pubkey=from_keypair.pubkey(), to_pubkey=sender.pubkey(), lamports=amount))
+            ixns.append(tx1)
+            signers.append(from_keypair)
+            
+            
+        message = Message(ixns, sender.pubkey())            
+        recent_blockhash = self.client.get_latest_blockhash().value.blockhash
+        tx = Transaction(signers, message, recent_blockhash)
+        tx.sign(signers, recent_blockhash)
+        result = self.client.send_transaction(tx)
+        print("txid:", result.value)
+        # self._send_tx(sender, ixns)
 
     # def batch_collection_spl(self, sender: Keypair, mint:Pubkey, amount: int):
     #     sql_data = f"select * from BatchWallet"
