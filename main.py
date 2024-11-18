@@ -47,7 +47,7 @@ if __name__ == "__main__":
     # 分发sol
     # cls.batch_transfer_sol(sender, 10000000)
     # 归集sol
-    cls.batch_collection_sol(sender)
+    # cls.batch_collection_sol(sender)
     # 查询
     # cls.get_addr_balance(sender.pubkey())
     # cls.get_token_balance(sender.pubkey(), mint)
@@ -73,6 +73,5 @@ if __name__ == "__main__":
     
     #----pump_buy_sell---
     print('--------pump-------')
-    # clsPump.batch_buy_sell(sender.pubkey(), 'tQxGNgVqxY7W4hQLMAy4oKXvGWaDs93M9kB9nSgw9Ct', 4)
-    
+    clsPump.batch_buy_sell(sender, 'tQxGNgVqxY7W4hQLMAy4oKXvGWaDs93M9kB9nSgw9Ct', 1)
     pass

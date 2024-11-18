@@ -36,6 +36,8 @@ from solders.pubkey import Pubkey  # type: ignore
 from solders.instruction import Instruction  # type: ignore
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price  # type: ignore
 
+import random
+
 class BatchPumpOption():
     UNIT_BUDGET =  100_000
     UNIT_PRICE =  1_000_000
@@ -68,14 +70,23 @@ class BatchPumpOption():
         
         # sol_in = 0.1
         # slippage = 25
+        options = [0.003, 0.002, 0.001]
         for index in range(idx, account_count):
             addr = accounts[index][0]
             addr_priv = accounts[index][1]
-            # addr = Pubkey.from_string(addr) 
+            random_value = random.choice(options)
             print(f'{index}----buy----------{addr}')
-            # self.buy(sender, addr_priv, mint, 0.001, 25)
-            print(f'{index}----sell--------{addr}')
-            self.sell(sender, addr_priv, mint, 100, 25, False)
+            # # 可供选择的减值列表
+            # # 随机选择一个值
+            # self.buy(sender, addr_priv, mint, random_value, 25)
+            # time.sleep(3)
+            # print(f'{index}----sell--------{addr}')
+            # self.sell(sender, addr_priv, mint, 100, 25, False)
+            
+            # self.atomic_buy_sell()
+            # result = self.atomic_buy_sell(sender,addr_priv,mint,random_value, slippage=25, close_token_account=False)
+            result = self.atomic_buy_sell(sender,addr_priv,mint,random_value, slippage=25, close_token_account=True)
+            return
 
     #-------pump---------------
     def find_data(self, data: Union[dict, list], field: str) -> Optional[str]:
@@ -413,4 +424,294 @@ class BatchPumpOption():
             print("Error:", e)
             return None
         
+        
+    def atomic_buy_sell_payer(self, pyer_keypair, owner_key, mint_str: str, sol_in: float = 0.01, slippage: int = 25, close_token_account: bool = True) -> bool:
+        try:
+            print(f"Starting atomic buy-sell transaction for mint: {mint_str}")
+            
+            # 获取代币数据
+            coin_data = self.get_coin_data(mint_str)
+            status = coin_data.get('complete')
+            print(status)
+            if status == True:
+                print("already complete")
+                return False
 
+            if not coin_data:
+                print("Failed to retrieve coin data...")
+                return
+            
+            # 设置账户
+            owner_keypair = Keypair.from_base58_string(owner_key)
+            owner = owner_keypair.pubkey()
+            pyer = pyer_keypair.pubkey()  # 添加 pyer 账户
+            mint = Pubkey.from_string(mint_str)
+            
+            # 获取或创建代币账户
+            try:
+                account_data = self.client.get_token_accounts_by_owner(owner, TokenAccountOpts(mint))
+                token_account = account_data.value[0].pubkey
+                token_account_instructions = None
+                print("Token account retrieved:", token_account)
+            except:
+                token_account = get_associated_token_address(owner, mint)
+                # token_account_instructions = create_associated_token_account(owner, owner, mint)
+                token_account_instructions = create_associated_token_account(pyer, owner, mint)
+                print("Token account created:", token_account)
+
+            # 计算买入金额
+            print("Calculating buy amounts...")
+            virtual_sol_reserves = coin_data['virtual_sol_reserves']
+            virtual_token_reserves = coin_data['virtual_token_reserves']
+            sol_in_lamports = sol_in * self.SOL_DECIMAL
+            buy_amount = int(sol_in_lamports * virtual_token_reserves / virtual_sol_reserves)
+            buy_slippage_adjustment = 1 + (slippage / 100)
+            sol_in_with_slippage = sol_in * buy_slippage_adjustment
+            max_sol_cost = int(sol_in_with_slippage * self.SOL_DECIMAL)
+            print(f"Buy Amount: {buy_amount} | Max Sol Cost: {max_sol_cost}")
+
+            # 计算卖出金额
+            print("Calculating sell amounts...")
+            token_price = virtual_sol_reserves / virtual_token_reserves
+            sell_amount = buy_amount  # 卖出买入的相同数量
+            sol_out = float(sell_amount) * token_price / self.SOL_DECIMAL
+            sell_slippage_adjustment = 1 - (slippage / 100)
+            min_sol_output = int(sol_out * sell_slippage_adjustment * self.SOL_DECIMAL)
+            print(f"Sell Amount: {sell_amount} | Min Sol Output: {min_sol_output}")
+
+            # 设置账户参数
+            MINT = Pubkey.from_string(coin_data['mint'])
+            BONDING_CURVE = Pubkey.from_string(coin_data['bonding_curve'])
+            ASSOCIATED_BONDING_CURVE = Pubkey.from_string(coin_data['associated_bonding_curve'])
+            ASSOCIATED_USER = token_account
+            USER = owner
+
+            # 创建买入指令
+            buy_keys = [
+                AccountMeta(pubkey=self.GLOBAL, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.FEE_RECIPIENT, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=MINT, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=BONDING_CURVE, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=ASSOCIATED_BONDING_CURVE, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=ASSOCIATED_USER, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=USER, is_signer=True, is_writable=True),
+                AccountMeta(pubkey=self.SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.TOKEN_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.RENT, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.EVENT_AUTHORITY, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.PUMP_FUN_PROGRAM, is_signer=False, is_writable=False)
+            ]
+
+            buy_data = bytearray()
+            buy_data.extend(bytes.fromhex("66063d1201daebea"))
+            buy_data.extend(struct.pack('<Q', buy_amount))
+            buy_data.extend(struct.pack('<Q', max_sol_cost))
+            buy_instruction = Instruction(self.PUMP_FUN_PROGRAM, bytes(buy_data), buy_keys)
+
+            # 创建卖出指令
+            sell_keys = [
+                AccountMeta(pubkey=self.GLOBAL, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.FEE_RECIPIENT, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=MINT, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=BONDING_CURVE, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=ASSOCIATED_BONDING_CURVE, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=ASSOCIATED_USER, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=USER, is_signer=True, is_writable=True),
+                AccountMeta(pubkey=self.SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.ASSOC_TOKEN_ACC_PROG, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.TOKEN_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.EVENT_AUTHORITY, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.PUMP_FUN_PROGRAM, is_signer=False, is_writable=False)
+            ]
+
+            sell_data = bytearray()
+            sell_data.extend(bytes.fromhex("33e685a4017f83ad"))
+            sell_data.extend(struct.pack('<Q', sell_amount))
+            sell_data.extend(struct.pack('<Q', min_sol_output))
+            sell_instruction = Instruction(self.PUMP_FUN_PROGRAM, bytes(sell_data), sell_keys)
+
+            # 构建并发送交易
+            print("Building atomic transaction...")
+            recent_blockhash = self.client.get_latest_blockhash().value.blockhash
+            # txn = Transaction(recent_blockhash=recent_blockhash, fee_payer=owner)
+            txn = Transaction(recent_blockhash=recent_blockhash, fee_payer=pyer)
+            
+            # 添加计算单元设置
+            txn.add(set_compute_unit_price(self.UNIT_PRICE))
+            txn.add(set_compute_unit_limit(self.UNIT_BUDGET))
+            
+            # 添加代币账户创建指令（如果需要）
+            if token_account_instructions:
+                txn.add(token_account_instructions)
+            
+            # 添加买入和卖出指令
+            txn.add(buy_instruction)
+            txn.add(sell_instruction)
+            
+            # 如果需要，添加关闭账户指令
+            if close_token_account:
+                print("Preparing to close token account after swap...")
+                close_account_instructions = close_account(CloseAccountParams(
+                    self.TOKEN_PROGRAM, token_account, owner, owner))
+                txn.add(close_account_instructions)
+
+            # 准备所有需要签名的账户
+            signers = [pyer_keypair, owner_keypair]
+            print("Signing and sending atomic transaction...")
+            # 使用 sign_all 方法进行签名
+            txn.sign(signers)
+            # 发送交易
+            txn_sig = self.client.send_legacy_transaction(txn, opts=TxOpts(skip_preflight=True)).value
+            print("Transaction Signature:", txn_sig)
+            # 确认交易
+            print("Confirming atomic transaction...")
+            confirmed = self.confirm_txn(txn_sig)
+            print("Transaction confirmed:", confirmed)
+            return confirmed
+        except Exception as e:
+            print("Error:", e)
+            return None
+            
+    def atomic_buy_sell(self, pyer_keypair, owner_key, mint_str: str, sol_in: float = 0.01, slippage: int = 25, close_token_account: bool = True) -> bool:
+        try:
+            print(f"Starting atomic buy-sell transaction for mint: {mint_str}")
+            
+            # 获取代币数据
+            coin_data = self.get_coin_data(mint_str)
+            status = coin_data.get('complete')
+            print(status)
+            if status == True:
+                print("already complete")
+                return False
+
+            if not coin_data:
+                print("Failed to retrieve coin data...")
+                return
+            
+            # 设置账户
+            owner_keypair = Keypair.from_base58_string(owner_key)
+            owner = owner_keypair.pubkey()
+            mint = Pubkey.from_string(mint_str)
+            
+            # 获取或创建代币账户
+            try:
+                account_data = self.client.get_token_accounts_by_owner(owner, TokenAccountOpts(mint))
+                token_account = account_data.value[0].pubkey
+                token_account_instructions = None
+                print("Token account retrieved:", token_account)
+            except:
+                token_account = get_associated_token_address(owner, mint)
+                token_account_instructions = create_associated_token_account(owner, owner, mint)
+                print("Token account created:", token_account)
+
+            # 计算买入金额
+            print("Calculating buy amounts...")
+            virtual_sol_reserves = coin_data['virtual_sol_reserves']
+            virtual_token_reserves = coin_data['virtual_token_reserves']
+            sol_in_lamports = sol_in * self.SOL_DECIMAL
+            buy_amount = int(sol_in_lamports * virtual_token_reserves / virtual_sol_reserves)
+            buy_slippage_adjustment = 1 + (slippage / 100)
+            sol_in_with_slippage = sol_in * buy_slippage_adjustment
+            max_sol_cost = int(sol_in_with_slippage * self.SOL_DECIMAL)
+            print(f"Buy Amount: {buy_amount} | Max Sol Cost: {max_sol_cost}")
+
+            # 计算卖出金额
+            print("Calculating sell amounts...")
+            token_price = virtual_sol_reserves / virtual_token_reserves
+            sell_amount = buy_amount  # 卖出买入的相同数量
+            sol_out = float(sell_amount) * token_price / self.SOL_DECIMAL
+            sell_slippage_adjustment = 1 - (slippage / 100)
+            min_sol_output = int(sol_out * sell_slippage_adjustment * self.SOL_DECIMAL)
+            print(f"Sell Amount: {sell_amount} | Min Sol Output: {min_sol_output}")
+
+            # 设置账户参数
+            MINT = Pubkey.from_string(coin_data['mint'])
+            BONDING_CURVE = Pubkey.from_string(coin_data['bonding_curve'])
+            ASSOCIATED_BONDING_CURVE = Pubkey.from_string(coin_data['associated_bonding_curve'])
+            ASSOCIATED_USER = token_account
+            USER = owner
+
+            # 创建买入指令
+            buy_keys = [
+                AccountMeta(pubkey=self.GLOBAL, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.FEE_RECIPIENT, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=MINT, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=BONDING_CURVE, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=ASSOCIATED_BONDING_CURVE, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=ASSOCIATED_USER, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=USER, is_signer=True, is_writable=True),
+                AccountMeta(pubkey=self.SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.TOKEN_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.RENT, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.EVENT_AUTHORITY, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.PUMP_FUN_PROGRAM, is_signer=False, is_writable=False)
+            ]
+
+            buy_data = bytearray()
+            buy_data.extend(bytes.fromhex("66063d1201daebea"))
+            buy_data.extend(struct.pack('<Q', buy_amount))
+            buy_data.extend(struct.pack('<Q', max_sol_cost))
+            buy_instruction = Instruction(self.PUMP_FUN_PROGRAM, bytes(buy_data), buy_keys)
+
+            # 创建卖出指令
+            sell_keys = [
+                AccountMeta(pubkey=self.GLOBAL, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.FEE_RECIPIENT, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=MINT, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=BONDING_CURVE, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=ASSOCIATED_BONDING_CURVE, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=ASSOCIATED_USER, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=USER, is_signer=True, is_writable=True),
+                AccountMeta(pubkey=self.SYSTEM_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.ASSOC_TOKEN_ACC_PROG, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.TOKEN_PROGRAM, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.EVENT_AUTHORITY, is_signer=False, is_writable=False),
+                AccountMeta(pubkey=self.PUMP_FUN_PROGRAM, is_signer=False, is_writable=False)
+            ]
+
+            sell_data = bytearray()
+            sell_data.extend(bytes.fromhex("33e685a4017f83ad"))
+            sell_data.extend(struct.pack('<Q', sell_amount))
+            sell_data.extend(struct.pack('<Q', min_sol_output))
+            sell_instruction = Instruction(self.PUMP_FUN_PROGRAM, bytes(sell_data), sell_keys)
+
+            # 构建并发送交易
+            print("Building atomic transaction...")
+            recent_blockhash = self.client.get_latest_blockhash().value.blockhash
+            txn = Transaction(recent_blockhash=recent_blockhash, fee_payer=owner)
+            
+            # 添加计算单元设置
+            txn.add(set_compute_unit_price(self.UNIT_PRICE))
+            txn.add(set_compute_unit_limit(self.UNIT_BUDGET * 2))
+            
+            # 添加代币账户创建指令（如果需要）
+            if token_account_instructions:
+                txn.add(token_account_instructions)
+            
+            # 添加买入和卖出指令
+            txn.add(buy_instruction)
+            txn.add(sell_instruction)
+            
+            # 如果需要，添加关闭账户指令
+            if close_token_account:
+                print("Preparing to close token account after swap...")
+                close_account_instructions = close_account(CloseAccountParams(
+                    self.TOKEN_PROGRAM, token_account, owner, owner))
+                txn.add(close_account_instructions)
+
+            # 签名并发送交易
+            print("Signing and sending atomic transaction...")
+            txn.sign(owner_keypair)
+            txn_sig = self.client.send_legacy_transaction(txn, owner_keypair, opts=TxOpts(skip_preflight=True)).value
+            print("Transaction Signature:", txn_sig)
+
+            # 确认交易
+            print("Confirming atomic transaction...")
+            confirmed = self.confirm_txn(txn_sig)
+            print("Transaction confirmed:", confirmed)
+            
+            return confirmed
+
+        except Exception as e:
+            print("Error:", e)
+            return None
